@@ -1,0 +1,180 @@
+
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<title>monitor Ethereum balance and transactions</title>
+<script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/2.2.3/jquery.min.js"></script>
+<script type="text/javascript" src="web3.min.js"></script>
+
+<script type="text/javascript">
+    var ws;
+    var socketurl;
+	var ethAddr;
+
+	// this is important as borwser will reject ws call if it is a https page
+    if (location.protocol === 'https:') {
+        socketurl = "wss://";
+    } else {
+        socketurl = "ws://";
+    }
+
+    socketurl += 'localhost:8546';
+
+    $().ready(function () {
+
+		if (typeof web3 !== 'undefined') {
+		  console.warn("Using web3 detected from external source like Metamask")
+		  // Use Mi0xa86e0a5ab51612e245fa96461cfc7df3129595950xa86e0a5ab51612e245fa96461cfc7df312959595st/MetaMask's provider
+		  window.web3 = new Web3(web3alert.currentProvider);
+		} else {
+		  console.warn("No web3 detected. Falling back to http://localhost:8545");
+		  // fallback - use your fallback strategy (local node / hosted node + in-dapp id mgmt / fail)
+		  window.web3 = new Web3(new Web3.providers.HttpProvider("http://localhost:8545"));
+		}
+
+		// get the Etherum address from URL
+		var qPara = window.location.search.substr(1).split('=');	// url query parameter
+		if (qPara[0] == 'addr') {
+			ethAddr = qPara[1];
+			$("#addr").text(ethAddr);
+		}
+
+		// show QR code
+		$('#qrcodeImg').attr('src', 'https://chart.googleapis.com/chart?cht=qr&chs=100x100&chl=' + window.location + '&choe=ISO-8859-1');
+
+		// bookmark section
+		var tmpList='';
+		var tmpListarr=[];
+		var seperator=' ';
+
+		if (typeof(Storage) == "undefined") {
+			alert('Sorry, no bookmark support in this browser');
+		}
+
+		if (typeof localStorage.bookmarklist !== "undefined") tmpList = localStorage.bookmarklist;
+		tmpListarr = tmpList.split(seperator);
+
+		// set to solid star if already bookmarked
+		tmpListarr.forEach(function(cur, i) {
+			if (cur == ethAddr) {
+				$("#bookmark").html('&#9733;');
+				$("#bookmark").prop('title','delete bookmark');
+			}
+		});
+
+		if (typeof ethAddr !== 'undefined') {
+	        $("#spanStatus").text("connecting");
+        	ws = new WebSocket(socketurl);
+
+	        ws.onopen = function () {
+	            $("#spanStatus").text("Connected to geth at " + socketurl + "");
+
+				// subscribe through websocket
+				ws.send('{"id": 1, "method": "eth_subscribe", "params": ["newHeads", {}]}');
+
+				// latest balance
+				$('#balance').text(web3.fromWei(web3.eth.getBalance(ethAddr),'ether').toString());
+
+				// spawn worker to scan blocks for recent transactions
+				var w;
+
+			  	if(typeof(Worker) !== "undefined") {
+					$('#waiting').show();
+					w = new Worker("scanRecent_worker.js");
+					w.postMessage(ethAddr);
+			 		w.onmessage = function(event) {
+						if (event.data == 'scan_finished') {
+							$('#waiting').hide();
+						} else {
+							$('#discussion2').append(event.data);
+						}
+					}
+				} else {
+			        alert("Sorry! No Web Worker support.");
+			    }
+			};
+
+	        ws.onmessage = function (evt) {
+				if (typeof JSON.parse(evt.data).params !== 'undefined') {
+		            var eAddress = JSON.parse(evt.data).params.result.hash;
+					var bCount = web3.eth.getBlockTransactionCount(eAddress);
+
+					for (i=0; i<bCount; i++) {
+						var pResult = web3.eth.getTransactionFromBlock(eAddress, i);
+						//console.log(typeof pResult + '   ' + typeof pResult.to + ' => ' + pResult.to);
+
+						if ( pResult.to == ethAddr) {
+							$('#discussion').prepend('<li><pre>' + new Date(web3.eth.getBlock(eAddress, true).timestamp * 1000).toLocaleString('en-US',{ year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+								+ ' : From ' + pResult.from + ', Value ' + web3.fromWei(pResult.value, 'ether').toString() + ', Balance '
+								+ web3.fromWei(web3.eth.getBalance(ethAddr),'ether').toString() + ' ether</pre></li>');
+
+							$('#balance').fadeOut("slow", function() {
+								$('#balance').text(web3.fromWei(web3.eth.getBalance(ethAddr),'ether').toString());
+								$('#balance').fadeIn("slow");
+							});
+						}
+					}
+				}
+			};
+
+	        ws.onerror = function (evt) {
+	            $("#spanStatus").text(evt.message);
+	            $('#discussion').append('<li><pre>Error! ' + evt.message + '</pre></li>');
+	        };
+
+	        ws.onclose = function () {
+	            var d = new Date();
+	            $("#spanStatus").text("Unable to connect to geth");
+		    };
+		};
+
+	    $(window).bind("beforeunload", function() {
+			ws.close();
+	     //   return confirm("Do you really want to close?");
+	    });
+
+		$("#bookmark").click(function () {
+			if (typeof localStorage.bookmarklist !== "undefined") tmpList = localStorage.bookmarklist;
+			tmpListarr = tmpList.split(seperator);
+
+			if ($("#bookmark").html().charCodeAt(0) == 9734) { // add bookmark
+				if (tmpList !='') tmpList += seperator;
+				if (typeof ethAddr !== 'undefined') tmpList += ethAddr;
+				localStorage.bookmarklist = tmpList;
+				$("#bookmark").html('&#9733;');
+				$("#bookmark").prop('title','delete bookmark');
+			} else if ($("#bookmark").html().charCodeAt(0) == 9733) { // delete bookmark
+				tmpListarr.forEach(function(cur, i) {
+					if (cur == ethAddr) {
+						tmpListarr[i] = null;
+					}
+				});
+				localStorage.bookmarklist = tmpListarr.filter(function(val) { return val !== null; }).join(seperator);
+				$("#bookmark").html('&#9734;')
+				$("#bookmark").prop('title','add bookmark');
+			};
+		});
+    });
+</script>
+
+<link rel="stylesheet" href="styles.css">
+</head>
+
+
+<body>
+<header>Transaction View&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="home.html">Go Home</a></header>
+<br /><br />
+<span id="spanStatus">(not connected)</span>
+<br /><br />
+<span title="add bookmark" id="bookmark">&#9734;</span> monitoring address at <span id="addr"></span>
+<br /><br />
+<img id="qrcodeImg" title="QR code of this page">
+<br /><br />
+current balance (ether) : <span id="balance">...</span>
+<br /><br />
+<ul id="discussion"></ul>
+<br /><br />
+scanning the three most recent incoming transactions <img id="waiting" src="waiting.gif" style="display:none" height="25" width="25">
+<ul id="discussion2"></ul>
+</body>
+</html>
