@@ -2,4 +2,4 @@ root = true
 
 [*.{html,css,js,jsx}]
 indent_style = tab
-indent_size = 4
+indent_size = 8
